@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>微信 · 面板</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --line: #e8eaee; --text: #1d2129; --muted: #86909c;
+    --accent: #07c160; --accent-soft: #e7f8ef; --hover: #f2f3f5; --active: #eaf7f0;
+    --bubble: #ffffff; --bubble-me: #95ec69; --radius: 14px;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+    color: var(--text); background: var(--bg);
+    display: grid; grid-template-columns: 76px 320px 1fr; height: 100vh; overflow: hidden;
+  }
+  /* rail */
+  .rail { background: #1f2329; display: flex; flex-direction: column; align-items: center; padding: 18px 0; gap: 6px; }
+  .self { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; color: #fff;
+        font-weight: 600; background: linear-gradient(135deg, #07c160, #10aeff); margin-bottom: 18px; }
+  .rail button { width: 56px; padding: 8px 0 6px; border: 0; border-radius: 12px; background: transparent; color: #a9aeb8;
+                 cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 11px; }
+  .rail button svg { width: 22px; height: 22px; }
+  .rail button:hover { background: #2b3038; color: #fff; }
+  .rail button.on { background: #2f3540; color: var(--accent); }
+  /* list */
+  .list { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100vh; }
+  .list header { padding: 18px 16px 10px; }
+  .list h1 { font-size: 18px; margin: 0 0 10px; }
+  .search { width: 100%; border: 0; background: var(--hover); border-radius: 10px; padding: 9px 12px; font: inherit; outline: none; }
+  .search:focus { box-shadow: 0 0 0 2px var(--accent-soft); background: #fff; }
+  .items { overflow-y: auto; flex: 1; min-height: 0; padding: 4px 8px 12px; }
+  .section { font-size: 12px; color: var(--muted); padding: 10px 10px 4px; }
+  .item { display: flex; gap: 12px; padding: 10px; border-radius: 12px; cursor: pointer; align-items: center; }
+  .item:hover { background: var(--hover); }
+  .item.on { background: var(--active); }
+  .avatar { flex: none; width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center;
+            color: #fff; font-weight: 600; font-size: 16px; }
+  .meta { min-width: 0; flex: 1; }
+  .row { display: flex; justify-content: space-between; gap: 8px; }
+  .name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .time { color: var(--muted); font-size: 12px; flex: none; }
+  .snippet { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tag { font-size: 11px; color: var(--accent); background: var(--accent-soft); border-radius: 6px; padding: 0 6px; margin-left: 6px; }
+  .item.unread .name { font-weight: 700; }
+  .item.unread .avatar { position: relative; }
+  .item.unread .avatar::after { content: ""; position: absolute; top: -3px; right: -3px; width: 11px; height: 11px; border-radius: 50%;
+                                background: #f53f3f; border: 2px solid #fff; }
+  /* main */
+  main { grid-column: 3; display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100vh; }
+  main > header { height: 64px; flex: none; display: flex; align-items: center; justify-content: space-between;
+                  padding: 0 28px; border-bottom: 1px solid var(--line); background: rgba(255,255,255,.7); backdrop-filter: blur(8px); }
+  main > header h2 { font-size: 17px; margin: 0; }
+  .sub { color: var(--muted); font-size: 12px; }
+  .content { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 24px 28px 40px; }
+  .empty { height: 100%; display: grid; place-items: center; color: var(--muted); text-align: center; }
+  .btn { border: 0; border-radius: 10px; padding: 8px 16px; font: inherit; cursor: pointer; background: var(--hover); color: var(--text); }
+  .btn:hover { filter: brightness(.97); }
+  .btn.primary { background: var(--accent); color: #fff; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  /* chat */
+  .day { text-align: center; margin: 18px 0 10px; }
+  .day span { color: var(--muted); font-size: 12px; background: #e9ebef; padding: 2px 10px; border-radius: 10px; }
+  .msg { display: flex; gap: 10px; margin: 10px 0; align-items: flex-start; }
+  .msg.me { flex-direction: row-reverse; }
+  .msg .avatar { width: 36px; height: 36px; font-size: 14px; border-radius: 10px; }
+  .msg .body { max-width: min(560px, 75%); }
+  .msg .who { font-size: 12px; color: var(--muted); margin: 0 4px 3px; }
+  .msg.me .who { text-align: right; }
+  .bubble { background: var(--bubble); padding: 9px 13px; border-radius: 12px; box-shadow: var(--shadow);
+            white-space: pre-wrap; word-break: break-word; }
+  .msg.me .bubble { background: var(--bubble-me); }
+  .quote { margin-top: 6px; padding: 6px 10px; border-radius: 8px; background: #e9ebef; color: #4e5969; font-size: 12.5px;
+           white-space: pre-wrap; word-break: break-word; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .bubble.media { color: var(--muted); font-style: italic; }
+  /* cards */
+  .cards { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+  .card { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px 18px; }
+  .card .head { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
+  .card .text { white-space: pre-wrap; word-break: break-word; }
+  .link { display: block; margin-top: 10px; padding: 10px 12px; background: var(--hover); border-radius: 10px;
+          color: inherit; text-decoration: none; }
+  .link:hover { background: #eceef1; }
+  .link b { display: block; font-weight: 500; }
+  .link small { color: var(--muted); display: block; margin-top: 2px; }
+  .thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .thumbs img { width: 96px; height: 96px; object-fit: cover; border-radius: 8px; background: var(--hover); }
+  .notice { font-size: 13px; color: var(--muted); padding: 8px 12px; background: var(--panel); border-radius: 10px; }
+  .article { padding: 12px 0; border-top: 1px solid var(--line); }
+  .article:first-of-type { border-top: 0; padding-top: 4px; }
+  .article a { color: var(--text); text-decoration: none; font-weight: 500; }
+  .article a:hover { color: var(--accent); }
+  .article p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  /* compose */
+  .compose { max-width: 760px; margin: 0 auto; }
+  .compose textarea { width: 100%; min-height: 460px; border: 1px solid var(--line); border-radius: var(--radius); padding: 16px;
+                      font: 14px/1.7 inherit; font-family: inherit; resize: vertical; outline: none; background: #fff; box-shadow: var(--shadow); }
+  .compose textarea:focus { border-color: var(--accent); }
+  .bar { display: flex; gap: 10px; align-items: center; margin: 14px 0; }
+  .bar .sub { margin-left: auto; }
+  .status { margin-top: 10px; font-size: 13px; }
+  .status.ok { color: var(--accent); } .status.err { color: #f53f3f; }
+  .spinner { width: 18px; height: 18px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%;
+             animation: spin .8s linear infinite; display: inline-block; vertical-align: middle; margin-right: 8px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* chat composer */
+  .composer { flex: none; border-top: 1px solid var(--line); background: var(--panel); padding: 12px 20px 14px; }
+  .composer[hidden] { display: none; }
+  .composer .box { display: flex; gap: 10px; align-items: flex-end; }
+  .composer textarea { flex: 1; min-height: 44px; max-height: 180px; resize: none; border: 1px solid var(--line); border-radius: 12px;
+                       padding: 10px 12px; font: inherit; outline: none; background: var(--bg); }
+  .composer textarea:focus { border-color: var(--accent); background: #fff; }
+  .composer .hint { font-size: 12px; color: var(--muted); margin-top: 6px; min-height: 18px; }
+  .composer .hint.err { color: #f53f3f; } .composer .hint.ok { color: var(--accent); }
+  .msg.pending .bubble { opacity: .55; }
+  .composer .attach { flex: none; width: 40px; height: 40px; padding: 0; display: grid; place-items: center; }
+  .composer .attach svg { width: 20px; height: 20px; }
+  .content.drop { outline: 2px dashed var(--accent); outline-offset: -10px; background: var(--accent-soft); }
+  .content, .items, .composer textarea { scrollbar-width: thin; scrollbar-color: #c9cdd4 transparent; }
+  .content::-webkit-scrollbar, .items::-webkit-scrollbar { width: 10px; }
+  .content::-webkit-scrollbar-thumb, .items::-webkit-scrollbar-thumb { background: #c9cdd4; border-radius: 10px; border: 2px solid transparent; background-clip: content-box; }
+  .content::-webkit-scrollbar-thumb:hover, .items::-webkit-scrollbar-thumb:hover { background-color: #a9aeb8; }
+  body.wide { grid-template-columns: 76px 0 1fr; }
+  body.wide .list { display: none; }
+  @media (max-width: 900px) {
+    body { grid-template-columns: 64px 240px 1fr; }
+    .rail button { width: 50px; }
+    .content { padding: 16px; }
+    main > header { padding: 0 16px; }
+  }
+</style>
+</head>
+<body>
+<nav class="rail">
+  <div class="self" id="me">我</div>
+  <button data-view="chats" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/></svg>聊天</button>
+  <button data-view="moments"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l6 4"/></svg>朋友圈</button>
+  <button data-view="biz"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>公众号</button>
+  <button data-view="post"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m4 20 16-8L4 4l2 8-2 8Z"/><path d="M6 12h14"/></svg>群快讯</button>
+  <button data-view="mpost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/><path d="m13 7 4 4"/></svg>发朋友圈</button>
+</nav>
+
+<section class="list">
+  <header><h1 id="list-title">聊天</h1><input class="search" id="search" placeholder="搜索"></header>
+  <div class="items" id="items"></div>
+</section>
+
+<main>
+  <header><div><h2 id="title">微信面板</h2><div class="sub" id="subtitle"></div></div><div id="actions"></div></header>
+  <div class="content" id="content"><div class="empty">选择左侧的聊天查看消息</div></div>
+  <footer class="composer" id="composer" hidden>
+    <div class="box">
+      <button class="btn attach" id="attach" title="发送图片或文件（也可以粘贴或拖进来）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg></button>
+      <input type="file" id="file" hidden>
+      <textarea id="input" rows="1" placeholder="输入消息，Enter 发送"></textarea>
+      <button class="btn primary" id="send">发送</button>
+    </div>
+    <div class="hint" id="hint"></div>
+  </footer>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const COLORS = ["#07c160", "#10aeff", "#fa9d3b", "#576b95", "#f56c6c", "#9b59b6", "#16a085", "#e67e22"];
+let me = {}, chats = [], current = null;
+
+function el(tag, props = {}, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") n.className = v; else if (k === "text") n.textContent = v; else n.setAttribute(k, v);
+  }
+  for (const c of kids.flat()) if (c != null) n.append(c);
+  return n;
+}
+function safeUrl(u) { try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? x.href : null; } catch { return null; } }
+function avatar(name) {
+  const s = (name || "?").trim(); let h = 0;
+  for (const ch of s) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+  const a = el("div", { class: "avatar", text: [...s][0] || "?" }); a.style.background = COLORS[h % COLORS.length]; return a;
+}
+function fmtTime(ts, full) {
+  const d = new Date(ts * 1000), now = new Date();
+  const hm = d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  if (full) return d.toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "short" });
+  if (d.toDateString() === now.toDateString()) return hm;
+  const y = new Date(now); y.setDate(now.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return "昨天 " + hm;
+  return `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+}
+const hm = (ts) => new Date(ts * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...opts, headers: { "Content-Type": "application/json", "X-WeChat-UI": "1" } });
+  const j = await r.json();
+  if (!r.ok || j.status === "error") throw new Error(j.message || j.error || r.statusText);
+  return j;
+}
+function loading(msg = "加载中…") { $("content").replaceChildren(el("div", { class: "empty" }, el("div", {}, el("span", { class: "spinner" }), msg))); }
+function failed(e) { $("content").replaceChildren(el("div", { class: "empty", text: "出错了：" + e.message })); }
+function header(title, sub = "", ...actions) { $("title").textContent = title; $("subtitle").textContent = sub; $("actions").replaceChildren(...actions); }
+const isMe = (m) => (me.account && m.sender_username === me.account) || (me.nickname && m.sender_display === me.nickname);
+
+/* ---------- chats ---------- */
+let found = [], searchTimer = null, seen = {}, ready = false, lastMsgKey = "";
+const chatKey = (c) => c.contact.username;
+function markSeen(list) { for (const c of list) seen[chatKey(c)] = Math.max(seen[chatKey(c)] || 0, c.last_message?.create_time || 0); }
+function contactItem(c, lm, unread = false) {
+  const name = c.display_name || c.username;
+  const item = el("div", { class: "item" + (current === name ? " on" : "") + (unread ? " unread" : "") }, avatar(name),
+    el("div", { class: "meta" },
+      el("div", { class: "row" }, el("span", { class: "name" }, name, c.is_chatroom ? el("span", { class: "tag", text: "群" }) : null),
+        el("span", { class: "time", text: lm?.create_time ? fmtTime(lm.create_time) : "" })),
+      el("div", { class: "snippet", text: lm ? (c.is_chatroom && lm.sender_display ? lm.sender_display + "：" : "") + (lm.text || (lm.type_name ? `[${lm.type_name}]` : "")) : [c.remark, c.nick_name].find((s) => s && s !== name) || "" })));
+  item.onclick = () => openChat(name);
+  return item;
+}
+function renderChatList() {
+  const q = $("search").value.trim().toLowerCase();
+  const list = chats.filter((c) => !q || (c.contact.display_name || "").toLowerCase().includes(q));
+  const shown = new Set(list.map((c) => c.contact.username));
+  const extra = q ? found.filter((c) => !shown.has(c.username)) : [];
+  $("items").replaceChildren(
+    ...list.map((c) => contactItem(c.contact, c.last_message || {}, (c.last_message?.create_time || 0) > (seen[chatKey(c)] || 0) && (c.contact.display_name || c.contact.username) !== current)),
+    ...(extra.length ? [el("div", { class: "section", text: "更多联系人和群" }), ...extra.map((c) => contactItem(c, null))] : []),
+  );
+}
+function onSearch() {
+  renderChatList();
+  clearTimeout(searchTimer);
+  const q = $("search").value.trim();
+  if (!q) { found = []; return; }
+  searchTimer = setTimeout(async () => {
+    try { found = (await api("/api/contacts?limit=40&q=" + encodeURIComponent(q))).contacts || []; } catch { found = []; }
+    if ($("search").value.trim() === q) renderChatList();
+  }, 300);
+}
+async function openChat(name) {
+  current = name; lastMsgKey = "";
+  markSeen(chats.filter((c) => (c.contact.display_name || c.contact.username) === name));
+  renderChatList(); header(name); loading();
+  $("composer").hidden = false; $("hint").textContent = ""; $("hint").className = "hint";
+  try { await loadMessages(name); } catch (e) { failed(e); }
+}
+async function loadMessages(name) {
+  const data = await api("/api/messages?limit=120&name=" + encodeURIComponent(name));
+  if (current !== name) return;
+  const msgs = [...(data.messages || [])].sort((a, b) => a.create_time - b.create_time);
+  const key = msgs.length ? `${msgs.length}:${msgs[msgs.length - 1].local_id}` : "0";
+  if (key === lastMsgKey) return;
+  const first = !lastMsgKey; lastMsgKey = key;
+  {
+    header(name, `${msgs.length} 条最近消息`, Object.assign(el("button", { class: "btn", text: "刷新" }), { onclick: () => openChat(name) }));
+    const out = []; let lastDay = "";
+    for (const m of msgs) {
+      const day = new Date(m.create_time * 1000).toDateString();
+      if (day !== lastDay) { out.push(el("div", { class: "day" }, el("span", { text: fmtTime(m.create_time, true) }))); lastDay = day; }
+      const mine = isMe(m), who = m.sender_display || m.sender_username || "";
+      const text = (m.quote && m.text ? m.text.split(/\s*引用：/)[0] : m.text) || `[${m.type_name || "消息"}]`;
+      out.push(el("div", { class: "msg" + (mine ? " me" : "") }, avatar(who),
+        el("div", { class: "body" }, el("div", { class: "who", text: (mine ? "" : who + " · ") + hm(m.create_time) }),
+          el("div", { class: "bubble" + (m.text ? "" : " media"), text }),
+          m.quote ? el("div", { class: "quote", text: `${m.quote.sender_display || ""}：${m.quote.text || `[${m.quote.type_name || "消息"}]`}` }) : null)));
+    }
+    const c = $("content");
+    const nearBottom = first || c.scrollHeight - c.scrollTop - c.clientHeight < 120;
+    const keep = c.scrollTop;
+    c.replaceChildren(...(out.length ? out : [el("div", { class: "empty", text: "没有消息" })]));
+    c.scrollTop = nearBottom ? c.scrollHeight : keep;
+  }
+}
+
+/* ---------- moments ---------- */
+async function showMoments() {
+  header("朋友圈", "电脑版只缓存刷到过的动态"); loading();
+  try {
+    const d = await api("/api/moments?limit=80");
+    const cards = (d.posts || []).map((p) => {
+      const card = el("div", { class: "card" },
+        el("div", { class: "head" }, avatar(p.author || p.nickname),
+          el("div", {}, el("div", { class: "name", text: p.author || p.nickname }), el("div", { class: "sub", text: fmtTime(p.create_time) + (p.location ? " · " + p.location : "") }))),
+        p.text ? el("div", { class: "text", text: p.text }) : null);
+      const url = safeUrl(p.link_url);
+      if (p.link_title || url) card.append(el(url ? "a" : "div", url ? { class: "link", href: url, target: "_blank", rel: "noopener noreferrer" } : { class: "link" },
+        el("b", { text: p.link_title || url }), p.link_description ? el("small", { text: p.link_description }) : null));
+      const thumbs = (p.media || []).map((m) => safeUrl(m.thumb || m.url)).filter(Boolean);
+      if (thumbs.length) card.append(el("div", { class: "thumbs" }, thumbs.map((src) => {
+        const img = el("img", { src, loading: "lazy", referrerpolicy: "no-referrer", alt: "" }); img.onerror = () => img.remove(); return img;
+      })));
+      return card;
+    });
+    const notices = (d.new_post_notices || []).slice(0, 5).map((n) => el("div", { class: "notice", text: `${fmtTime(n.create_time)}  ${n.author} ${n.summary ? "：" + n.summary : "发了新动态"}` }));
+    $("content").replaceChildren(el("div", { class: "cards" }, ...notices, ...(cards.length ? cards : [el("div", { class: "empty", text: "暂无朋友圈缓存" })])));
+  } catch (e) { failed(e); }
+}
+
+/* ---------- official accounts ---------- */
+async function showBiz() {
+  header("公众号", "登录期间收到的推送"); loading();
+  try {
+    const d = await api("/api/biz?limit=80");
+    const cards = (d.pushes || []).map((p) => {
+      const arts = (p.articles || []).map((a) => {
+        const url = safeUrl(a.url);
+        return el("div", { class: "article" },
+          url ? el("a", { href: url, target: "_blank", rel: "noopener noreferrer", text: a.title || "（无标题）" }) : el("b", { text: a.title || "（无标题）" }),
+          a.digest ? el("p", { text: a.digest }) : null);
+      });
+      return el("div", { class: "card" },
+        el("div", { class: "head" }, avatar(p.account || p.publisher),
+          el("div", {}, el("div", { class: "name", text: p.account || p.publisher }), el("div", { class: "sub", text: fmtTime(p.create_time) }))),
+        ...(arts.length ? arts : [el("div", { class: "text", text: p.text || "" })]));
+    });
+    $("content").replaceChildren(el("div", { class: "cards" }, ...(cards.length ? cards : [el("div", { class: "empty", text: "暂无公众号推送" })])));
+  } catch (e) { failed(e); }
+}
+
+/* ---------- group post ---------- */
+function showPost() {
+  header("群快讯", "生成后可修改，确认再发送");
+  const ta = el("textarea", { placeholder: "点「生成预览」，大约需要 1 分钟联网搜索…" });
+  const count = el("span", { class: "sub", text: "" });
+  const status = el("div", { class: "status" });
+  const gen = el("button", { class: "btn", text: "生成预览" });
+  const send = el("button", { class: "btn primary", text: "发送到群" });
+  const upd = () => { count.textContent = ta.value.length + " 字"; send.disabled = !ta.value.trim(); };
+  ta.oninput = upd; upd();
+  gen.onclick = async () => {
+    gen.disabled = send.disabled = true; status.className = "status"; status.replaceChildren(el("span", { class: "spinner" }), "正在搜索并撰写…");
+    try { const d = await api("/api/group-post/preview", { method: "POST", body: "{}" }); ta.value = d.text; send.textContent = "发送到「" + d.group + "」"; status.textContent = ""; }
+    catch (e) { status.className = "status err"; status.textContent = "生成失败：" + e.message; }
+    gen.disabled = false; upd();
+  };
+  send.onclick = async () => {
+    if (!confirm("确定把这条快讯发到群里吗？发出后无法撤回。")) return;
+    gen.disabled = send.disabled = true; status.className = "status"; status.replaceChildren(el("span", { class: "spinner" }), "正在通过微信发送…");
+    try {
+      const r = await api("/api/group-post/send", { method: "POST", body: JSON.stringify({ text: ta.value }) });
+      const ok = ["executed", "queued", "timeout"].includes(r.status);
+      status.className = "status " + (ok ? "ok" : "err");
+      status.textContent = ok ? "已发送（" + r.status + "）" : "发送失败：" + (r.message || r.status) + "。请先在微信里确认没有发出，再重试。";
+    } catch (e) { status.className = "status err"; status.textContent = "发送失败：" + e.message; }
+    gen.disabled = false; upd();
+  };
+  $("content").replaceChildren(el("div", { class: "compose" }, el("div", { class: "bar" }, gen, send, count), ta, status));
+}
+
+/* ---------- moments post ---------- */
+async function showMomentsPost() {
+  header("发朋友圈", "选主题生成或直接输入；先「试填」检查，再发表");
+  const pick = el("select", { class: "btn" });
+  try { for (const t of (await api("/api/moments-post/topics")).topics) pick.append(el("option", { value: t.id, text: t.title })); } catch {}
+  const ta = el("textarea", { placeholder: "点「生成」联网搜索撰写，或直接输入要发的文字…" });
+  const count = el("span", { class: "sub" });
+  const status = el("div", { class: "status" });
+  const gen = el("button", { class: "btn", text: "生成" });
+  const test = el("button", { class: "btn", text: "试填（不发表）" });
+  const pub = el("button", { class: "btn primary", text: "发表到朋友圈" });
+  const btns = [gen, test, pub];
+  const upd = () => { count.textContent = ta.value.length + " 字"; test.disabled = pub.disabled = !ta.value.trim(); };
+  ta.oninput = upd; upd();
+  const busy = (msg) => { btns.forEach((b) => b.disabled = true); status.className = "status"; status.replaceChildren(el("span", { class: "spinner" }), msg); };
+  const done = () => { gen.disabled = false; upd(); };
+  gen.onclick = async () => {
+    busy("正在搜索并撰写…");
+    try { ta.value = (await api("/api/moments-post/preview", { method: "POST", body: JSON.stringify({ topic: pick.value }) })).text; status.textContent = ""; }
+    catch (e) { status.className = "status err"; status.textContent = "生成失败：" + e.message; }
+    done();
+  };
+  const run = async (mode) => {
+    if (mode === "publish" && !confirm("确定发表到朋友圈吗？所有好友都会看到。")) return;
+    busy(mode === "publish" ? "正在发表…" : "正在试填，可以在 localhost:3000 看到过程…");
+    try {
+      const r = await api("/api/moments-post/send", { method: "POST", body: JSON.stringify({ topic: pick.value, text: ta.value, mode }) });
+      const ok = r.status === "published" || r.status === "tested";
+      status.className = "status " + (ok ? "ok" : "err");
+      status.textContent = { published: "已发表", tested: "试填成功，已取消，没有发表", unconfirmed: "已点发表但未确认，请在微信里检查后再决定是否重发" }[r.status] || "失败：" + (r.message || r.status);
+    } catch (e) { status.className = "status err"; status.textContent = "失败：" + e.message; }
+    done();
+  };
+  test.onclick = () => run("test");
+  pub.onclick = () => run("publish");
+  $("content").replaceChildren(el("div", { class: "compose" }, el("div", { class: "bar" }, pick, gen, test, pub, count), ta, status));
+}
+
+/* ---------- composer ---------- */
+let sending = false;
+function fitInput() { const t = $("input"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 180) + "px"; }
+async function sendCurrent() {
+  const text = $("input").value.trim(), name = current, hint = $("hint");
+  if (!text || !name || sending) return;
+  sending = true; $("send").disabled = true;
+  hint.className = "hint"; hint.replaceChildren(el("span", { class: "spinner" }), `正在通过微信发送给「${name}」…`);
+  const pending = el("div", { class: "msg me pending" }, avatar(me.nickname || "我"),
+    el("div", { class: "body" }, el("div", { class: "who", text: "发送中" }), el("div", { class: "bubble", text })));
+  $("content").append(pending); $("content").scrollTop = $("content").scrollHeight;
+  try {
+    const r = await api("/api/send", { method: "POST", body: JSON.stringify({ name, text }) });
+    if (["executed", "queued", "timeout"].includes(r.status)) {
+      $("input").value = ""; fitInput();
+      if (current === name) await openChat(name);
+      hint.className = "hint ok"; hint.textContent = r.status === "executed" ? "已发送" : "已提交，稍后刷新确认";
+    } else {
+      pending.remove();
+      hint.className = "hint err"; hint.textContent = "发送失败：" + (r.message || r.error || r.status) + "。先在微信里确认没发出去再重试。";
+    }
+  } catch (e) { pending.remove(); hint.className = "hint err"; hint.textContent = "发送失败：" + e.message; }
+  sending = false; $("send").disabled = false; $("input").focus();
+}
+$("input").addEventListener("input", fitInput);
+$("input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendCurrent(); }
+});
+$("send").onclick = sendCurrent;
+
+const MAX_FILE = 10 * 1024 * 1024;
+const readDataUrl = (f) => new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => bad(r.error); r.readAsDataURL(f); });
+function fileSize(n) { return n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.ceil(n / 1024) + " KB"; }
+async function sendFile(f) {
+  const name = current, hint = $("hint");
+  if (!f || !name || sending) return;
+  if (f.size > MAX_FILE) { hint.className = "hint err"; hint.textContent = `文件太大（${fileSize(f.size)}），最多 10 MB`; return; }
+  const isImg = f.type.startsWith("image/");
+  if (!confirm(`把${isImg ? "图片" : "文件"}「${f.name || "粘贴的图片"}」（${fileSize(f.size)}）发给「${name}」？`)) return;
+  sending = true; $("send").disabled = $("attach").disabled = true;
+  hint.className = "hint"; hint.replaceChildren(el("span", { class: "spinner" }), `正在通过微信发送${isImg ? "图片" : "文件"}…`);
+  try {
+    const data = await readDataUrl(f);
+    const r = await api("/api/send-file", { method: "POST", body: JSON.stringify({ name, data, mime: f.type, file_name: f.name || "image.png" }) });
+    if (["executed", "queued", "timeout"].includes(r.status)) {
+      if (current === name) await openChat(name);
+      hint.className = "hint ok"; hint.textContent = r.status === "executed" ? "已发送" : "已提交，稍后刷新确认";
+    } else { hint.className = "hint err"; hint.textContent = "发送失败：" + (r.message || r.error || r.status) + "。先在微信里确认没发出去再重试。"; }
+  } catch (e) { hint.className = "hint err"; hint.textContent = "发送失败：" + e.message; }
+  sending = false; $("send").disabled = $("attach").disabled = false;
+}
+$("attach").onclick = () => $("file").click();
+$("file").onchange = () => { const f = $("file").files[0]; $("file").value = ""; sendFile(f); };
+$("input").addEventListener("paste", (e) => {
+  const f = [...(e.clipboardData?.files || [])][0];
+  if (f) { e.preventDefault(); sendFile(f); }
+});
+const chatOpen = () => !$("composer").hidden;
+$("content").addEventListener("dragover", (e) => { if (chatOpen()) { e.preventDefault(); $("content").classList.add("drop"); } });
+$("content").addEventListener("dragleave", () => $("content").classList.remove("drop"));
+$("content").addEventListener("drop", (e) => {
+  $("content").classList.remove("drop");
+  if (!chatOpen()) return;
+  e.preventDefault(); sendFile(e.dataTransfer.files[0]);
+});
+
+/* ---------- nav ---------- */
+const views = { chats: () => { header("微信面板"); current ? openChat(current) : $("content").replaceChildren(el("div", { class: "empty", text: "选择左侧的聊天查看消息" })); },
+                moments: showMoments, biz: showBiz, post: showPost, mpost: showMomentsPost };
+document.querySelectorAll(".rail button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll(".rail button").forEach((x) => x.classList.toggle("on", x === b));
+  document.body.classList.toggle("wide", b.dataset.view !== "chats");
+  $("composer").hidden = !(b.dataset.view === "chats" && current);
+  views[b.dataset.view]();
+});
+$("search").oninput = onSearch;
+
+(async () => {
+  try { me = await api("/api/me"); $("me").textContent = [...(me.nickname || "我")][0]; $("me").title = me.nickname || ""; } catch {}
+  try { chats = (await api("/api/chats?limit=300")).chats || []; markSeen(chats); ready = true; renderChatList(); }
+  catch (e) { $("items").replaceChildren(el("div", { class: "empty", text: "连不上微信服务：" + e.message })); }
+  setInterval(poll, 5000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+})();
+
+let polling = false;
+async function poll() {
+  if (polling || sending || document.hidden || !ready) return;
+  polling = true;
+  try {
+    const fresh = (await api("/api/chats?limit=300")).chats || [];
+    const sig = (l) => l.map((c) => chatKey(c) + ":" + (c.last_message?.local_id || "")).join("|");
+    if (sig(fresh) !== sig(chats)) {
+      const keep = $("items").scrollTop;
+      chats = fresh; renderChatList(); $("items").scrollTop = keep;
+    }
+    if (current && !$("composer").hidden) {
+      const c = chats.find((x) => (x.contact.display_name || x.contact.username) === current);
+      if (c) markSeen([c]);
+      await loadMessages(current);
+    }
+  } catch { /* transient; try again next tick */ }
+  polling = false;
+}
+</script>
+</body>
+</html>

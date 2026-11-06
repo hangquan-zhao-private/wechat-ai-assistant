@@ -1,0 +1,546 @@
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 3bbd46d..16350cc 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -1,4 +1,7 @@
+ ---
++# Host networking: phone chat-history import needs WeChat to see the real LAN IP.
++# DISPLAY=:99 avoids colliding with the host desktop's X display (:1), whose
++# abstract socket is shared once the network namespace is shared.
+ services:
+   wechat-ai:
+     build:
+@@ -8,7 +11,9 @@ services:
+     container_name: wechat-ai
+     hostname: wechat-ai
+     privileged: true
++    network_mode: host
+     environment:
++      - DISPLAY=:99
+       - PUID=${PUID:-1000}
+       - PGID=${PGID:-100}
+       - TZ=${TZ:-Asia/Shanghai}
+@@ -37,9 +42,5 @@ services:
+       - ./plugins:/plugins:ro
+     devices:
+       - /dev/dri:/dev/dri
+-    ports:
+-      - "${HTTP_PORT:-3100}:3000"
+-      - "${HTTPS_PORT:-3101}:3001"
+-      - "${MCP_PORT:-8100}:8000"
+     restart: unless-stopped
+     shm_size: "${SHM_SIZE:-2gb}"
+diff --git a/src/wechat_ai_bot/mcp/app.py b/src/wechat_ai_bot/mcp/app.py
+index efdac60..3d048b0 100644
+--- a/src/wechat_ai_bot/mcp/app.py
++++ b/src/wechat_ai_bot/mcp/app.py
+@@ -25,6 +25,7 @@ from mcp.server.fastmcp import Context, FastMCP
+ from mcp.types import ImageContent, TextContent
+ from wechat_ai_bot.clients.mqtt_client import MQTTClient
+ from wechat_ai_bot.mcp.debug import add_media_base64, build_debug_status, register_debug_routes
++from wechat_ai_bot.mcp.feeds import moments_feed, official_account_feed
+ from wechat_ai_bot.mcp.dispatchers import (
+     MqttCommandDispatcher,
+     QueueCommandDispatcher,
+@@ -1018,10 +1019,19 @@ def create_app(user_info: UserInfo, config: dict, bot: Any = None) -> FastMCP:
+             )
+         bounded_limit = _bounded_int(limit, 30, 1, 200)
+         rows = _rows_for_contact(db, contact, bounded_limit)
+-        messages = [
+-            _factory_message_payload(db, contact, row) if parse_media else _message_payload(db, row, include_text=True, chat_username=contact.username if contact else "")
+-            for row in rows
+-        ]
++
++        def _list_payload(row: tuple) -> dict[str, Any]:
++            if parse_media:
++                return _factory_message_payload(db, contact, row)
++            if len(row) > 2 and row[2] == MessageType.Quote:
++                # Plain listing skips the factory, which leaves replies without their text or quoted original.
++                payload = _factory_message_payload(db, contact, row)
++                payload.pop("quote_base64", None)
++                payload.pop("quote_base64_mime_type", None)
++                return payload
++            return _message_payload(db, row, include_text=True, chat_username=contact.username if contact else "")
++
++        messages = [_list_payload(row) for row in rows]
+         if not include_non_text:
+             messages = [
+                 message
+@@ -1171,6 +1181,84 @@ def create_app(user_info: UserInfo, config: dict, bot: Any = None) -> FastMCP:
+             }
+         )
+ 
++    def _feed_contact_name(username: str) -> str:
++        db = _database_service()
++        contact = db.get_contact_by_username(username) if db and username else None
++        return str(getattr(contact, "display_name", "") or "") if contact else ""
++
++    def _feed_username(contact_name: Optional[str]) -> tuple[str, Optional[str]]:
++        if not contact_name:
++            return "", None
++        contact = _resolve_contact_name(contact_name)
++        if not contact:
++            return "", _json({"status": "not_found", "message": f"未找到联系人或公众号: {contact_name}"})
++        return contact.username, None
++
++    def _add_feed_times(items: list[dict[str, Any]]) -> None:
++        for item in items:
++            item["time"] = _format_timestamp(item.get("create_time"))
++
++    @mcp.tool()
++    @handle_tool_exceptions
++    def get_moments(
++        ctx: Context,
++        contact_name: Optional[str] = None,
++        start_timestamp: Optional[int] = None,
++        end_timestamp: Optional[int] = None,
++        limit: Optional[int] = 50,
++    ) -> str:
++        """
++        Read cached Moments (朋友圈): posts, new-post notices, and likes/comments on my posts.
++        Only Moments already loaded in the desktop WeChat GUI are available.
++        """
++        db = _database_service()
++        if not db or not getattr(db, "is_available", False):
++            return _json(_database_unavailable_payload(db))
++        username, error = _feed_username(contact_name)
++        if error:
++            return error
++        payload = moments_feed(
++            db,
++            _feed_contact_name,
++            username=username,
++            start_timestamp=start_timestamp,
++            end_timestamp=end_timestamp,
++            limit=_bounded_int(limit, 50, 1, 500),
++        )
++        for key in ("posts", "new_post_notices", "interactions"):
++            _add_feed_times(payload.get(key, []))
++        return _json(payload)
++
++    @mcp.tool()
++    @handle_tool_exceptions
++    def get_official_account_messages(
++        ctx: Context,
++        contact_name: Optional[str] = None,
++        start_timestamp: Optional[int] = None,
++        end_timestamp: Optional[int] = None,
++        limit: Optional[int] = 100,
++    ) -> str:
++        """
++        Read official-account (公众号) pushes with article titles, digests and links.
++        Optionally filter by account name. Only pushes received while desktop WeChat was logged in are stored.
++        """
++        db = _database_service()
++        if not db or not getattr(db, "is_available", False):
++            return _json(_database_unavailable_payload(db))
++        username, error = _feed_username(contact_name)
++        if error:
++            return error
++        payload = official_account_feed(
++            db,
++            _feed_contact_name,
++            username=username,
++            start_timestamp=start_timestamp,
++            end_timestamp=end_timestamp,
++            limit=_bounded_int(limit, 100, 1, 1000),
++        )
++        _add_feed_times(payload.get("pushes", []))
++        return _json(payload)
++
+     @mcp.tool()
+     @handle_tool_exceptions
+     def query_wechat_msg(
+diff --git a/src/wechat_ai_bot/mcp/feeds.py b/src/wechat_ai_bot/mcp/feeds.py
+new file mode 100644
+index 0000000..8b977bd
+--- /dev/null
++++ b/src/wechat_ai_bot/mcp/feeds.py
+@@ -0,0 +1,286 @@
++"""Read-only Moments (SNS) and official-account (biz) feeds from Linux WeChat DBs.
++
++The desktop client only stores Moments that were loaded in its GUI and
++official-account pushes received while it was logged in.
++"""
++
++from __future__ import annotations
++
++import hashlib
++import re
++import xml.etree.ElementTree as ET
++from typing import Any, Callable, Optional
++
++from wechat_ai_bot.weixin.message_content import message_content_text
++
++SNS_DB = "sns/sns.db"
++BIZ_DB_RE = re.compile(r"^message/biz_message_\d+\.db$")
++
++SNS_CONTENT_TYPES = {
++    1: "图片",
++    2: "文字",
++    3: "链接",
++    4: "音乐",
++    5: "视频",
++    7: "图片",
++    15: "视频",
++    28: "视频号",
++    34: "视频号",
++}
++
++ContactName = Callable[[str], str]
++
++
++def _parse_xml(text: str) -> Optional[ET.Element]:
++    if not text:
++        return None
++    start = text.find("<")
++    if start < 0:
++        return None
++    try:
++        return ET.fromstring(text[start:])
++    except ET.ParseError:
++        return None
++
++
++def _text(node: Optional[ET.Element], path: str) -> str:
++    if node is None:
++        return ""
++    found = node.find(path)
++    return (found.text or "").strip() if found is not None and found.text else ""
++
++
++def _int(value: Any) -> int:
++    try:
++        return int(value or 0)
++    except (TypeError, ValueError):
++        return 0
++
++
++def _in_range(ts: int, start: Optional[int], end: Optional[int]) -> bool:
++    return (start is None or ts >= start) and (end is None or ts <= end)
++
++
++def _rows(db: Any, path: Any, sql: str, params: tuple = ()) -> list[tuple]:
++    try:
++        return db.execute_query(path, sql, params)
++    except Exception:
++        return []
++
++
++def parse_sns_item(content: str) -> dict[str, Any]:
++    root = _parse_xml(content)
++    timeline = root.find(".//TimelineObject") if root is not None else None
++    if timeline is None:
++        return {"raw": content[:500]}
++    content_obj = timeline.find("ContentObject")
++    content_type = _int(_text(content_obj, "type"))
++    media = []
++    for item in timeline.findall("./ContentObject/mediaList/media"):
++        media.append(
++            {
++                "type": _int(_text(item, "type")),
++                "url": _text(item, "url"),
++                "thumb": _text(item, "thumb"),
++                "title": _text(item, "title"),
++                "description": _text(item, "description"),
++            }
++        )
++    location = timeline.find("location")
++    place = ""
++    if location is not None:
++        place = location.get("poiName") or location.get("city") or ""
++    return {
++        "id": _text(timeline, "id"),
++        "username": _text(timeline, "username"),
++        "nickname": _text(root, ".//LocalExtraInfo/nickname"),
++        "create_time": _int(_text(timeline, "createTime")),
++        "text": _text(timeline, "contentDesc"),
++        "content_type": content_type,
++        "content_type_name": SNS_CONTENT_TYPES.get(content_type, str(content_type)),
++        "link_title": _text(content_obj, "title"),
++        "link_description": _text(content_obj, "description"),
++        "link_url": _text(content_obj, "contentUrl"),
++        "location": place,
++        "media": media,
++    }
++
++
++def moments_feed(
++    db: Any,
++    contact_name: ContactName,
++    *,
++    username: str = "",
++    start_timestamp: Optional[int] = None,
++    end_timestamp: Optional[int] = None,
++    limit: int = 50,
++) -> dict[str, Any]:
++    path = db._db(SNS_DB)
++    if not path:
++        return {"status": "unavailable", "message": f"{SNS_DB} not found or has no SQLCipher key"}
++
++    posts = []
++    for (content,) in _rows(db, path, "select content from SnsTimeLine"):
++        post = parse_sns_item(message_content_text(content))
++        ts = post.get("create_time", 0)
++        if username and post.get("username") != username:
++            continue
++        if not _in_range(ts, start_timestamp, end_timestamp):
++            continue
++        post["author"] = post.get("nickname") or contact_name(post.get("username", ""))
++        posts.append(post)
++    posts.sort(key=lambda p: p.get("create_time", 0), reverse=True)
++
++    notices: dict[Any, dict[str, Any]] = {}
++    for tid, user, summary, ts in _rows(db, path, "select tid, username, summary, create_time from SnsTopItem_1"):
++        ts = _int(ts)
++        if (username and user != username) or not _in_range(ts, start_timestamp, end_timestamp):
++            continue
++        notices[tid] = {
++            "username": user,
++            "author": contact_name(user),
++            "summary": message_content_text(summary),
++            "create_time": ts,
++        }
++
++    interactions = []
++    for row in _rows(
++        db,
++        path,
++        "select create_time, type, feed_id, is_unread, from_username, from_nickname, content "
++        "from SnsMessage_tmp3 order by create_time desc",
++    ):
++        ts, kind, feed_id, unread, from_user, from_nick, text = row
++        ts = _int(ts)
++        if not _in_range(ts, start_timestamp, end_timestamp):
++            continue
++        interactions.append(
++            {
++                "create_time": ts,
++                "type": kind,
++                "feed_id": str(feed_id or ""),
++                "is_unread": bool(unread),
++                "from_username": from_user or "",
++                "from_display": from_nick or contact_name(from_user or ""),
++                "text": message_content_text(text),
++            }
++        )
++
++    return {
++        "status": "ok",
++        "note": "Only Moments loaded in the desktop WeChat GUI are cached locally.",
++        "post_count": len(posts),
++        "posts": posts[:limit],
++        "new_post_notices": sorted(notices.values(), key=lambda n: n["create_time"], reverse=True)[:limit],
++        "interactions": interactions[:limit],
++    }
++
++
++def parse_biz_message(text: str) -> dict[str, Any]:
++    root = _parse_xml(text)
++    if root is None:
++        return {"kind": "text", "text": text.strip()[:2000], "articles": []}
++    appmsg = root.find(".//appmsg")
++    articles = []
++    for item in root.findall(".//mmreader/category/item"):
++        title = _text(item, "title")
++        if not title:
++            continue
++        articles.append(
++            {
++                "title": title,
++                "digest": _text(item, "digest"),
++                "url": _text(item, "url"),
++                "pub_time": _int(_text(item, "pub_time")),
++            }
++        )
++    if not articles and appmsg is not None and _text(appmsg, "title"):
++        articles.append(
++            {
++                "title": _text(appmsg, "title"),
++                "digest": _text(appmsg, "des"),
++                "url": _text(appmsg, "url"),
++                "pub_time": 0,
++            }
++        )
++    return {
++        "kind": "articles" if articles else "xml",
++        "publisher": _text(root, ".//mmreader/publisher/nickname") or _text(root, ".//mmreader/category/name"),
++        "articles": articles,
++        "text": "" if articles else _text(appmsg, "title")[:2000],
++    }
++
++
++def official_account_feed(
++    db: Any,
++    contact_name: ContactName,
++    *,
++    username: str = "",
++    start_timestamp: Optional[int] = None,
++    end_timestamp: Optional[int] = None,
++    limit: int = 100,
++) -> dict[str, Any]:
++    paths = []
++    missing_keys = []
++    for account in db._accounts_for_queries():
++        for relative, path in sorted(account.databases.items()):
++            if BIZ_DB_RE.match(relative):
++                (paths if db._has_key(path) else missing_keys).append(path)
++    if not paths:
++        return {
++            "status": "unavailable",
++            "message": "No readable message/biz_message_*.db",
++            "missing_keys": [p.name for p in missing_keys],
++        }
++
++    clauses, params = [], []
++    if start_timestamp is not None:
++        clauses.append("create_time >= ?")
++        params.append(int(start_timestamp))
++    if end_timestamp is not None:
++        clauses.append("create_time <= ?")
++        params.append(int(end_timestamp))
++    where = f"where {' and '.join(clauses)}" if clauses else ""
++
++    pushes = []
++    for path in paths:
++        names = {
++            hashlib.md5(str(user).encode()).hexdigest(): str(user)
++            for (user,) in _rows(db, path, "select user_name from Name2Id")
++            if user
++        }
++        if username:
++            table = f"Msg_{hashlib.md5(username.encode()).hexdigest()}"
++            tables = [table] if table[4:] in names else []
++        else:
++            tables = [
++                name
++                for (name,) in _rows(db, path, "select name from sqlite_master where type='table' and name like 'Msg_%'")
++            ]
++        for table in tables:
++            user = names.get(table[4:], "")
++            sql = (
++                f'select create_time, local_type, message_content, WCDB_CT_message_content '
++                f'from "{table}" {where} order by create_time desc limit ?'
++            )
++            for ts, local_type, content, ct_flag in _rows(db, path, sql, (*params, int(limit))):
++                parsed = parse_biz_message(message_content_text(content, ct_flag))
++                pushes.append(
++                    {
++                        "username": user,
++                        "account": contact_name(user) or parsed.get("publisher") or user,
++                        "create_time": _int(ts),
++                        "local_type": local_type,
++                        **parsed,
++                    }
++                )
++    pushes.sort(key=lambda p: p["create_time"], reverse=True)
++    pushes = pushes[:limit]
++    return {
++        "status": "ok",
++        "note": "Only pushes received while desktop WeChat was logged in are stored locally.",
++        "count": len(pushes),
++        "article_count": sum(len(p["articles"]) for p in pushes),
++        "missing_keys": [p.name for p in missing_keys],
++        "pushes": pushes,
++    }
+diff --git a/tests/test_feeds.py b/tests/test_feeds.py
+new file mode 100644
+index 0000000..1a49ab9
+--- /dev/null
++++ b/tests/test_feeds.py
+@@ -0,0 +1,95 @@
++import hashlib
++from pathlib import Path
++from types import SimpleNamespace
++
++from wechat_ai_bot.mcp.feeds import moments_feed, official_account_feed, parse_biz_message, parse_sns_item
++
++SNS_XML = (
++    "<SnsDataItem><TimelineObject><id>1</id><username>wxid_a</username>"
++    "<createTime>1793314162</createTime><contentDesc>周末爬山</contentDesc>"
++    '<location poiName="Mount Si" city="Seattle"/>'
++    "<ContentObject><type>1</type><mediaList><media><type>2</type>"
++    "<url>http://img/0</url><thumb>http://img/150</thumb></media></mediaList></ContentObject>"
++    "</TimelineObject><LocalExtraInfo><nickname>Alice</nickname></LocalExtraInfo></SnsDataItem>"
++)
++
++BIZ_XML = (
++    "<msg><appmsg><title>头条</title><des>摘要</des><mmreader>"
++    "<category count=\"2\"><name>北美内推鹅</name>"
++    "<item><title><![CDATA[岗位A]]></title><url>http://a</url><digest>H-1B</digest><pub_time>1793321448</pub_time></item>"
++    "<item><title>岗位B</title><url>http://b</url></item>"
++    "</category><publisher><nickname>北美内推鹅</nickname></publisher></mmreader></appmsg></msg>"
++)
++
++
++class FakeDb:
++    def __init__(self, tables):
++        self.tables = tables
++        self.sns = Path("/x/sns/sns.db")
++        self.biz = Path("/x/message/biz_message_0.db")
++        self.account = SimpleNamespace(databases={"sns/sns.db": self.sns, "message/biz_message_0.db": self.biz})
++
++    def _db(self, relative):
++        return self.account.databases.get(relative)
++
++    def _accounts_for_queries(self):
++        return [self.account]
++
++    def _has_key(self, path):
++        return True
++
++    def execute_query(self, path, sql, params=()):
++        for name, rows in self.tables.items():
++            if name in sql:
++                return rows
++        return []
++
++
++def test_parse_sns_item_extracts_text_media_location():
++    post = parse_sns_item(SNS_XML)
++    assert post["text"] == "周末爬山"
++    assert post["nickname"] == "Alice"
++    assert post["location"] == "Mount Si"
++    assert post["content_type_name"] == "图片"
++    assert post["media"][0]["url"] == "http://img/0"
++
++
++def test_moments_feed_dedupes_notices_and_filters_time():
++    db = FakeDb(
++        {
++            "SnsTimeLine": [(SNS_XML,)],
++            "SnsTopItem_1": [(5, "wxid_b", "", 1793318429), (5, "wxid_b", "", 1793318429)],
++            "SnsMessage_tmp3": [],
++        }
++    )
++    payload = moments_feed(db, lambda u: {"wxid_b": "Bob"}.get(u, ""))
++    assert payload["post_count"] == 1
++    assert payload["posts"][0]["author"] == "Alice"
++    assert [n["author"] for n in payload["new_post_notices"]] == ["Bob"]
++
++    later = moments_feed(db, lambda u: "", start_timestamp=1793318000)
++    assert later["post_count"] == 0
++    assert len(later["new_post_notices"]) == 1
++
++
++def test_parse_biz_message_prefers_mmreader_items():
++    parsed = parse_biz_message(BIZ_XML)
++    assert [a["title"] for a in parsed["articles"]] == ["岗位A", "岗位B"]
++    assert parsed["articles"][0]["digest"] == "H-1B"
++    assert parsed["publisher"] == "北美内推鹅"
++
++
++def test_official_account_feed_maps_table_to_account():
++    user = "gh_d7f5a2ed3f08"
++    table = f"Msg_{hashlib.md5(user.encode()).hexdigest()}"
++    db = FakeDb(
++        {
++            "Name2Id": [(user,)],
++            "sqlite_master": [(table,)],
++            table: [(1793321448, 49, BIZ_XML, 0)],
++        }
++    )
++    payload = official_account_feed(db, lambda u: "北美内推鹅" if u == user else "")
++    assert payload["count"] == 1
++    assert payload["article_count"] == 2
++    assert payload["pushes"][0]["account"] == "北美内推鹅"

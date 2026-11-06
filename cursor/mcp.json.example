@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "wechat-ai": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://127.0.0.1:8000/mcp",
+        "--header",
+        "Authorization:${WECHAT_AI_MCP_AUTH}"
+      ],
+      "env": {
+        "WECHAT_AI_MCP_AUTH": "Bearer REPLACE_WITH_TOKEN_FROM_vendor/wechat-ai/.env"
+      }
+    }
+  }
+}
